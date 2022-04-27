@@ -1,4 +1,4 @@
-- hosts: localhost
+- hosts: all
   vars:
     access: AKIAVVSMU3GDPWFGNZ4Y
     secret: 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
