@@ -1,78 +1,67 @@
-- hosts: all
+---
+- name: playbook to create EC2 resource RHEL8 instance
+  hosts: localhost
   vars:
-    access: AKIAVVSMU3GDPWFGNZ4Y
-    secret: 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
-    region: ap-south-1
+    aws_region: ap-south-1
   tasks:
-    - ec2_vpc_net:
-        name: gst-vpc
-        cidr_block: 10.10.0.0/24
-        region: "{{ region }}"
+    - name: Task to create the VPC
+      ec2_vpc_net:
+        name: ansible_tower_vpc
+        cidr_block: 10.10.0.0/16
+        region: "{{ aws_region }}"
+        tenancy: default
+      register: ansible_tower_vpc
+    - name: create an Internet Gateway and associate to vpc
+      ec2_vpc_igw:
+        vpc_id: "{{ ansible_tower_vpc.vpc.id }}"
+        region: "{{ aws_region }}"
         state: present
-        aws_access_key: "{{ access }}"
-        aws_secret_key: "{{ secret }}" 
-      register: vpc
-    - ec2_vpc_subnet:
+      register: ansible_tower_igw
+    - name: create a subnet in VPC
+      ec2_vpc_subnet:
         state: present
-        vpc_id: "{{ vpc.vpc.id }}"
-        region: "{{ region }}"
-        cidr: 10.10.0.0/26
-        aws_access_key: "{{ access }}"
-        aws_secret_key: "{{ secret }}"
-        map_public: yes
-        resource_tags:
-          Name: gst-subnet
-      register: subnet	
-    - ec2_vpc_igw:
-        vpc_id: "{{ vpc.vpc.id }}"
-        region: "{{ region }}"
-        aws_access_key: "{{ access }}"
-        aws_secret_key: "{{ secret }}"
-        state: "present"
-        tags: 
-          Name: gst-igw
-      register: igw
-    - ec2_vpc_route_table:
-        vpc_id: "{{ vpc.vpc.id }}"
-        region: "{{ region }}"
-        aws_access_key: "{{ access }}"
-        aws_secret_key: "{{ secret }}"
+        vpc_id: "{{ ansible_tower_vpc.vpc.id }}"
+        cidr: 10.10.0.0/20
+        region: "{{ aws_region }}"
+      register: ansible_tower_subnet
+    - name: set up public subnet route table
+      ec2_vpc_route_table:
+        vpc_id: "{{ ansible_tower_vpc.vpc.id }}"
+        region: "{{ aws_region }}"
         subnets:
-          - "{{ subnet.subnet.id }}"
+            - "{{ ansible_tower_subnet.subnet.id }}"
         routes:
           - dest: 0.0.0.0/0
-            gateway_id: "{{ igw.gateway_id  }}"
-        tags:
-          Name: gst-route
-    - ec2_group:
-        name: gtsg
-        description: security group
-        vpc_id: "{{ vpc.vpc.id }}"
-        region: "{{ region }}"
-        aws_access_key: "{{ access }}"
-        aws_secret_key: "{{ secret }}"
+            gateway_id: "{{ ansible_tower_igw.gatway_id }}"
+
+
+    - name: Task to create AWS security Groups
+      ec2_group:
+        name: ansible_tower_sg
+        description: AWS security group for ansible tower Demonstration
+        vpc_id: "{{ ansible_tower_vpc.vpc.id }}"
+        region: "{{ aws_region }}"
         rules:
           - proto: tcp
             ports:
-            - 80
+              - 22
             cidr_ip: 0.0.0.0/0
-          - proto: tcp
-            ports:
-            - 22
-            cidr_ip: 0.0.0.0/0
-      register: security_group
-    - ec2:
-        image:  ami-0a3277ffce9146b74
-        wait: yes
-        instance_type: t2.micro
-        region: "{{ region }}"
-        group_id: "{{ security_group.group_id }}"
-        vpc_subnet_id: "{{ subnet.subnet.id }}"
-        key_name: fminstance
-        instance_tags:
-          Name: gttestvm
-        count_tag:
-          Name: testgt
-        exact_count: 1
-        aws_access_key: "{{ access }}"
-        aws_secret_key: "{{ secret }}"
+            rule_desc: allow all connection on port 22
+
+# Create a RHEL8 instance using ec2 module, combining the resources created in the privious tasks.
+
+    - name: Task to provision the RHEL8 EC2 instance
+      ec2:
+         region: "{{ aws_region }}"
+         key_name: ansible-tower-aws-key
+         instance_type: t2.medium
+         image: ami-000979d0952elea3a
+         wait: yes
+         group: ansible_tower_sg
+         count: 1
+         vpc_subnet_id: "{{ ansible_tower_subnet.subnet.id }}"
+         assign_public_ip: yes
+
+    - name: Show  RHEL8  instance Details
+      debug:
+        msg: "The  RHEL8 instance is accessible at {{ ansible_tower_instance.instance[0].public_ip }}"
